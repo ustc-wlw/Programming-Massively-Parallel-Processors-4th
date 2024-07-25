@@ -3,19 +3,18 @@
 
 #include "myutil.h"
 
-#define TILE_WIDTH 16
-
-namespace ch5 {
+namespace ch6 {
 enum matrix_shape_type {
         Base,                   // matrixMulKernelBase
         Multiple_Block_Square,  // matrixMulKernelFixSquare
-        Generic_Square,         // matrixMulKernelGenericSquare
         Generic,                // matrixMulKernelGeneric
-        Generic_Dynamic_Shm,    // matrixMulKernelGenericDynamicShm
 };
+
+constexpr int TILE_WIDTH = 16;
+constexpr int COARSE_FACTOR = 2;
 }
 
-using namespace ch5;
+using namespace ch6;
 
 void matrixMulCPU(float* M, float* N, float* P, int M_height, int M_width, int N_width) {
     for (size_t row = 0; row < M_height; row++)
@@ -29,13 +28,6 @@ void matrixMulCPU(float* M, float* N, float* P, int M_height, int M_width, int N
             }
             P[row * N_width + col] = pValue;
         }
-    }
-}
-
-__device__ void printThread0(const char* info) {
-    if(blockIdx.x == 0 && blockIdx.y == 0 
-        && threadIdx.x ==0 && threadIdx.y == 0) {
-        printf("%s\n", info);
     }
 }
 
@@ -62,95 +54,72 @@ void matrixMulKernelFixSquare(float* M, float* N, float* P, int width) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
+    int colStart = blockIdx.x * blockDim.x * COARSE_FACTOR + tx;
 
+    int globl_index = row * width + col;
+    if(globl_index == 64) printf("colStart is %d, stage number: %d\n", colStart, width / TILE_WIDTH);
     // shared memory
     __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
     __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
 
-    float pValue = 0;
+    // multiple elements of P that this thread is responsial for caculating
+    float pValues[COARSE_FACTOR];
+    for (size_t i = 0; i < COARSE_FACTOR; i++)
+    {
+        pValues[i] = 0;
+    }
+    
     for(int stage = 0; stage < (width / TILE_WIDTH); stage++) {
         // load global data to shared memory by Tile (TILE_WIDTH * TILE_WIDTH per block)
         // each thread load a float
         Mds[ty][tx] = M[row * width + stage * TILE_WIDTH + tx];
-        Nds[ty][tx] = N[(stage * TILE_WIDTH + ty) * width + col];
 
-        __syncthreads();
+        // process adjoint COARSE_FACTOR Tiles of N matrix to reuse current M Tile cache
+        for (int i = 0; i < COARSE_FACTOR; i++)
+        {
+            int current_col = colStart + i * TILE_WIDTH;
+            if(globl_index == 64) printf("stage index: %d, current_col is %d, step index: %d\n", stage, current_col, i);
+            Nds[ty][tx] = N[(stage * TILE_WIDTH + ty) * width + current_col];
 
-        for(int k = 0; k < TILE_WIDTH; k++) {
-            pValue += Mds[ty][k] * Nds[k][tx];
+            __syncthreads();
+
+            for(int k = 0; k < TILE_WIDTH; k++) {
+                pValues[i] += Mds[ty][k] * Nds[k][tx];
+            }
+
+            __syncthreads();
+            if(globl_index == 64) printf("stage index: %d, pValue is %f, step index: %d\n", stage, pValues[i], i);
         }
-
-        __syncthreads();
+        
     }
 
-    P[row * width + col] = pValue;
-}
-
-
-// input matrix width is arbitrary size and squre matrix
-// block dim equals TILE_WIDTH
-__global__
-void matrixMulKernelGenericSquare(float* M, float* N, float* P, int width) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-
-    // shared memory
-    __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
-
-    float pValue = 0;
-    // caution: stage number change!!!
-    for(int stage = 0; stage < ceil(width / float(TILE_WIDTH)); stage++) {
-        // load global data to shared memory by Tile (TILE_WIDTH * TILE_WIDTH per block)
-        // each thread load a float
-        // add boundary check
-        if((stage * TILE_WIDTH + tx) < width && row < width) {
-            Mds[ty][tx] = M[row * width + stage * TILE_WIDTH + tx];
-        }else{
-            Mds[ty][tx] = 0;
-        }
-        if((stage * TILE_WIDTH + ty) < width && col < width) {
-            Nds[ty][tx] = N[(stage * TILE_WIDTH + ty) * width + col];
-        }else{
-            Nds[ty][tx] = 0;
-        }
-
-        __syncthreads();
-
-        for(int k = 0; k < TILE_WIDTH; k++) {
-            pValue += Mds[ty][k] * Nds[k][tx];
-        }
-
-        __syncthreads();
+    // assign COARSE_FACTOR elements of P that caculated by this thread
+    for (size_t i = 0; i < COARSE_FACTOR; i++)
+    {
+        P[row * width + colStart + i * TILE_WIDTH] = pValues[i];
     }
 
-    if(col < width && row < width) {
-        P[row * width + col] = pValue;
-    }
 }
 
 
 // input matrix width is arbitrary size
 __global__
 void matrixMulKernelGeneric(float* M, float* N, float* P, int M_height, int M_width, int N_width) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-
-    // if(blockIdx.x == 0 && blockIdx.y == 0 
-    //     && threadIdx.x ==0 && threadIdx.y == 0) {
-    //     printf("M_height: %d, M_width: %d, N_width: %d, stage: %f\n", M_height, M_width, N_width,
-    //             ceil(M_width / float(TILE_WIDTH)));
-    // }
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int colStart = blockIdx.x * blockDim.x * COARSE_FACTOR + tx;
 
     // shared memory
     __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
     __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
 
-    float pValue = 0;
+    float pValues[COARSE_FACTOR];
+    for (size_t i = 0; i < COARSE_FACTOR; i++)
+    {
+        pValues[i] = 0;
+    }
+
     for(int stage = 0; stage < ceil(M_width / float(TILE_WIDTH)); stage++) {
         // load global data to shared memory by Tile (TILE_WIDTH * TILE_WIDTH per block)
         // each thread load a float
@@ -160,74 +129,35 @@ void matrixMulKernelGeneric(float* M, float* N, float* P, int M_height, int M_wi
         }else{
             Mds[ty][tx] = 0;
         }
-        // N_height = M_width
-        if((stage * TILE_WIDTH + ty) < M_width && col < N_width) {
-            Nds[ty][tx] = N[(stage * TILE_WIDTH + ty) * N_width + col];
-        }else{
-            Nds[ty][tx] = 0;
-        }
 
-        __syncthreads();
+        // process adjoint COARSE_FACTOR Tiles of N matrix to reuse current M Tile cache
+        for (int i = 0; i < COARSE_FACTOR; i++) {
+            int current_col = colStart + i * TILE_WIDTH;
+                // N_height = M_width
+            if((stage * TILE_WIDTH + ty) < M_width && current_col < N_width) {
+                Nds[ty][tx] = N[(stage * TILE_WIDTH + ty) * N_width + current_col];
+            }else{
+                Nds[ty][tx] = 0;
+            }
 
-        for(int k = 0; k < TILE_WIDTH; k++) {
-            pValue += Mds[ty][k] * Nds[k][tx];
-        }
+            __syncthreads();
 
-        __syncthreads();
+            for(int k = 0; k < TILE_WIDTH; k++) {
+                pValues[i] += Mds[ty][k] * Nds[k][tx];
+            }
+
+            __syncthreads();
+
+            }
     }
 
     // output matrix shape: M_height * N_width
-    if(col < N_width && row < M_height) {
-        P[row * N_width + col] = pValue;
-    }
-}
-
-
-// input matrix width is arbitrary size
-// dynamic shared memory size
-__global__
-void matrixMulKernelGenericDynamicShm(float* M, float* N, float* P, int M_height,
-        int M_width, int N_width, int M_shm_size, int N_shm_size) {
-
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-
-    // dynamic shared memory
-    extern __shared__ char Mds_Nds[];
-    float* Mds = (float*)(Mds_Nds);
-    float* Nds = (float*)(Mds_Nds + M_shm_size);
-
-    float pValue = 0;
-    for(int stage = 0; stage < ceil(M_width / float(TILE_WIDTH)); stage++) {
-        // load global data to shared memory by Tile (TILE_WIDTH * TILE_WIDTH per block)
-        // each thread load a float
-        // add boundary check
-        if((stage * TILE_WIDTH + tx) < M_width && row < M_height) {
-            Mds[ty * TILE_WIDTH + tx] = M[row * M_width + stage * TILE_WIDTH + tx];
-        }else{
-            Mds[ty * TILE_WIDTH + tx] = 0;
+    // assign COARSE_FACTOR elements of P that caculated by this thread
+    for (size_t i = 0; i < COARSE_FACTOR; i++)
+    {
+        if(row < M_height && (colStart + i * TILE_WIDTH) < N_width) {
+            P[row * N_width + colStart + i * TILE_WIDTH] = pValues[i];
         }
-        // N_height = M_width
-        if((stage * TILE_WIDTH + ty) < M_width && col < N_width) {
-            Nds[ty * TILE_WIDTH + tx] = N[(stage * TILE_WIDTH + ty) * N_width + col];
-        }else{
-            Nds[ty * TILE_WIDTH + tx] = 0;
-        }
-
-        __syncthreads();
-
-        for(int k = 0; k < TILE_WIDTH; k++) {
-            pValue += Mds[ty * TILE_WIDTH + k] * Nds[k * TILE_WIDTH + tx];
-        }
-
-        __syncthreads();
-    }
-
-    // output matrix shape: M_height * N_width
-    if(col < N_width && row < M_height) {
-        P[row * N_width + col] = pValue;
     }
 }
 
@@ -278,8 +208,6 @@ void matMul2DTest(int blockSize, int M_height, int M_width, int N_width,
     printf("kernel launch setting: <<<grid(%d, %d), block(%d, %d)\n", grid.x, grid.y, block.x, block.y);
 
     cudaEventRecord(start, stream);
-    int dynamic_shm_size = 0;
-    int sub_shared_momery_size = 0;
     // launch kernel
     switch (shape_type)
     {
@@ -289,18 +217,8 @@ void matMul2DTest(int blockSize, int M_height, int M_width, int N_width,
     case Multiple_Block_Square:
         matrixMulKernelFixSquare<<<grid, block, 0, stream>>>(d_M, d_N, d_P, M_width);
         break;
-    case Generic_Square:
-        matrixMulKernelGenericSquare<<<grid, block, 0, stream>>>(d_M, d_N, d_P, M_width);
-        break;
     case Generic:
         matrixMulKernelGeneric<<<grid, block, 0, stream>>>(d_M, d_N, d_P, M_height, M_width, N_width);
-        break;
-    case Generic_Dynamic_Shm:
-        dynamic_shm_size = 2 * TILE_WIDTH * TILE_WIDTH * sizeof(float);
-        sub_shared_momery_size = dynamic_shm_size / 2;
-        printf("Test matrixMulKernelGenericDynamicShm with dynamic shared memory size: %d bytes!\n", dynamic_shm_size);
-        matrixMulKernelGenericDynamicShm<<<grid, block, dynamic_shm_size, stream>>>(d_M, d_N, d_P, M_height, M_width,
-                                N_width, sub_shared_momery_size, sub_shared_momery_size);
         break;
     default:
         printf("Invalid shape type, not support now!!!\n");
@@ -350,16 +268,10 @@ int main() {
     int M_height = M_width;
     int N_width = M_width;
 
-    matrix_shape_type shape_type = Generic_Dynamic_Shm;
+    matrix_shape_type shape_type = Generic;
     switch (shape_type)
     {
-        case Generic_Square:
-            M_width += 3;
-            M_height = M_width;
-            N_width = M_width;
-            break;
         case Generic:
-        case Generic_Dynamic_Shm:
             M_width += 2;
             M_height += 3;
             N_width += 5;

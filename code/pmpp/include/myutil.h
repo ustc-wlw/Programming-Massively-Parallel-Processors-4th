@@ -28,7 +28,7 @@ void initData(float* data, int size) {
     srand((unsigned)time(&t));
     for (size_t i = 0; i < size; i++)
     {
-        data[i] = (float)(rand() & 0xffff) / 1000.0f;
+        data[i] = (float)(rand() & 0xffff) / 10000.0f;
         // data[i] = 1;
     }
 }
@@ -39,6 +39,13 @@ void initData_int(float* data, int size) {
     for (size_t i = 0; i < size; i++)
     {
         data[i] = (rand() & 0xff) % 100;
+    }
+}
+
+inline void constantInit(float *data, int size, float val)
+{
+    for (int i = 0; i < size; ++i) {
+        data[i] = val;
     }
 }
 

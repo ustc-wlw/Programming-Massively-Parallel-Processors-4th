@@ -1,1 +1,1 @@
-add_executable(deviceProperty deviceProperty.cu)
+add_executable(matixMatTiled matixMatTiled.cu)
