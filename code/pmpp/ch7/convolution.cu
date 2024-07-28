@@ -152,7 +152,7 @@ void convolution_2D_Tiled_constMemory_kernel1(float *N, float *P, int width, int
                     pValue += Ns[tileRow + fRow][tileCol + fCol] * filter[fRow][fCol];
                 }
             }
-            P[row * width + height] = pValue;
+            P[row * width + col] = pValue;
         }
     }
 }
@@ -195,7 +195,7 @@ void convolution_2D_Tiled_constMemory_kernel2(float *N, float *P, int width, int
                 pValue += Ns[tileRow + fRow][tileCol + fCol] * filter[fRow][fCol];
             }
         }
-        P[row * width + height] = pValue;
+        P[row * width + col] = pValue;
     }
 }
 
