@@ -1,0 +1,1 @@
+add_executable(parallel_histogram parallel_histogram.cu)
