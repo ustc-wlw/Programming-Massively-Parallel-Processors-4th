@@ -62,3 +62,16 @@ void checkResult(float* hostRef, float* gpuRef, const int N) {
     }
     printf("Check result success!\n");
 }
+
+void checkIntResult(unsigned int* hostRef, unsigned int* gpuRef, const int N) {
+    for(int i = 0; i < N; i++)
+    {
+        if(hostRef[i] != gpuRef[i])
+        {
+            printf("Results don\'t match!\n");
+            printf("%d(hostRef[%d]) != %d(gpuRef[%d])\n", hostRef[i], i, gpuRef[i], i);
+            return;
+        }
+    }
+    printf("Check result success!\n");
+}
