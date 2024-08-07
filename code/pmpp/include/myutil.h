@@ -33,12 +33,13 @@ void initData(float* data, int size) {
     }
 }
 
-void initData_int(float* data, int size) {
+// generate random int value between [low, high]
+void initData_int(int* data, int size, int low=0, int high=1000) {
     time_t t;
     srand((unsigned)time(&t));
     for (size_t i = 0; i < size; i++)
     {
-        data[i] = (rand() & 0xff) % 100;
+        data[i] = rand() % (high - low + 1) + low;
     }
 }
 
@@ -63,7 +64,21 @@ void checkResult(float* hostRef, float* gpuRef, const int N) {
     printf("Check result success!\n");
 }
 
-void checkIntResult(unsigned int* hostRef, unsigned int* gpuRef, const int N) {
+template<typename T>
+void checkIntResult(T* hostRef, T* gpuRef, const int N) {
+    for(int i = 0; i < N; i++)
+    {
+        if(hostRef[i] != gpuRef[i])
+        {
+            printf("Results don\'t match!\n");
+            printf("%d(hostRef[%d]) != %d(gpuRef[%d])\n", hostRef[i], i, gpuRef[i], i);
+            return;
+        }
+    }
+    printf("Check result success!\n");
+}
+
+void checkIntResult(int* hostRef, int* gpuRef, const int N) {
     for(int i = 0; i < N; i++)
     {
         if(hostRef[i] != gpuRef[i])
