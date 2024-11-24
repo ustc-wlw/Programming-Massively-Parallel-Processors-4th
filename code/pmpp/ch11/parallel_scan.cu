@@ -243,7 +243,7 @@ void kogge_stone_scan_thread_coarse_kernel(float* input, int len, float* out) {
 		__syncthreads();
 	}
 
-	// phase 3: each thread adds the new value of the last element of its predecessor¡¯s section
+	// phase 3: each thread adds the new value of the last element of its predecessorï¿½ï¿½s section
 	// to its elements.The last elements of each subsection do not need to
 	// be updated during this phase.
 	if (threadIdx.x >= 1)
